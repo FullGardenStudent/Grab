@@ -9,32 +9,24 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/InputComponent.h"
 #include "GameFramework/InputSettings.h"
-#include "HeadMountedDisplayFunctionLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "MotionControllerComponent.h"
-#include "XRMotionControllerBase.h" // for FXRMotionControllerBase::RightHandSourceId
+#include "PhysicsEngine/PhysicsHandleComponent.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFPChar, Warning, All);
 
-//////////////////////////////////////////////////////////////////////////
-// AGrabCharacter
-
 AGrabCharacter::AGrabCharacter()
 {
-	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(55.f, 96.0f);
 
-	// set our turn rates for input
 	BaseTurnRate = 45.f;
 	BaseLookUpRate = 45.f;
 
-	// Create a CameraComponent	
 	FirstPersonCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("FirstPersonCamera"));
 	FirstPersonCameraComponent->SetupAttachment(GetCapsuleComponent());
 	FirstPersonCameraComponent->SetRelativeLocation(FVector(-39.56f, 1.75f, 64.f)); // Position the camera
 	FirstPersonCameraComponent->bUsePawnControlRotation = true;
 
-	// Create a mesh component that will be used when being viewed from a '1st person' view (when controlling this pawn)
 	Mesh1P = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("CharacterMesh1P"));
 	Mesh1P->SetOnlyOwnerSee(true);
 	Mesh1P->SetupAttachment(FirstPersonCameraComponent);
@@ -43,7 +35,6 @@ AGrabCharacter::AGrabCharacter()
 	Mesh1P->SetRelativeRotation(FRotator(1.9f, -19.19f, 5.2f));
 	Mesh1P->SetRelativeLocation(FVector(-0.5f, -4.4f, -155.7f));
 
-	// Create a gun mesh component
 	FP_Gun = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("FP_Gun"));
 	FP_Gun->SetOnlyOwnerSee(false);			// otherwise won't be visible in the multiplayer
 	FP_Gun->bCastDynamicShadow = false;
@@ -58,20 +49,27 @@ AGrabCharacter::AGrabCharacter()
 	// Default offset from the character location for projectiles to spawn
 	// GunOffset = FVector(100.0f, 0.0f, 10.0f);
 
-	///////////////////////////////////////////////////////////////////////////////////////////
-	// Create a definition for object pickup location
 	PickedObjectLocation = CreateDefaultSubobject<USceneComponent>(TEXT("PickedUpObjectLocation"));
 	PickedObjectLocation->SetupAttachment(FP_Gun);  // Stick this component to First person character's gun.
 }
 
 void AGrabCharacter::BeginPlay()
 {
-	// Call the base class  
 	Super::BeginPlay();
-
-	//Attach gun mesh component to Skeleton, doing it here because the skeleton is not yet created in the constructor
 	FP_Gun->AttachToComponent(Mesh1P, FAttachmentTransformRules(EAttachmentRule::SnapToTarget, true), TEXT("GripPoint"));
-
+	PhysicsHandleComponent = NewObject<UPhysicsHandleComponent>(this, TEXT("PhysicsHandle"));			/// Create a new physicshandlecomopnent object
+	PhysicsHandleComponent->RegisterComponent();							/// since PhysicsHandle is a componet, it's declared a bit differently, as per my understanding.
+	FVector2D ScreenSize;													/// get the screen size so that we can set the crosshair at the center later
+	GEngine->GameViewport->GetViewportSize(ScreenSize);					/// with this, ScreenSize 2 dimesion vector will have the size of screen stored in it.
+	CenterX = ScreenSize.X /2;												/// do some math to get the center point of the screen
+	CenterY = ScreenSize.Y /2;
+	MyPlayerController = GetWorld()->GetFirstPlayerController();			/// GetFirstPlayerController() will return whatever is the default player controller
+																			/// now, our Playercontroller is not null and holds a PlayerController
+	if(MyPlayerController)													/// if the GetFirstPlayerController() returned null, out game will crash. to avoid if, we perform a check
+	{
+		MyPlayerController->bShowMouseCursor = true;						///setting this false will not show any mouse cursor
+		MyPlayerController->CurrentMouseCursor= EMouseCursor::Crosshairs;	/// https://docs.unrealengine.com/4.26/en-US/Resources/ContentExamples/MouseInterface/SettingsAndCursors/index.html
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -79,18 +77,14 @@ void AGrabCharacter::BeginPlay()
 
 void AGrabCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
 {
-	// set up gameplay key bindings
 	check(PlayerInputComponent);
 
-	// Bind jump events
 	PlayerInputComponent->BindAction("Jump", IE_Pressed, this, &ACharacter::Jump);
 	PlayerInputComponent->BindAction("Jump", IE_Released, this, &ACharacter::StopJumping);
 
-	// Bind fire event
 	PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &AGrabCharacter::OnFire);
 	PlayerInputComponent->BindAction("Fire", IE_Released, this, &AGrabCharacter::AfterFire);
 
-	// Bind movement events
 	PlayerInputComponent->BindAxis("MoveForward", this, &AGrabCharacter::MoveForward);
 	PlayerInputComponent->BindAxis("MoveRight", this, &AGrabCharacter::MoveRight);
 
@@ -102,87 +96,70 @@ void AGrabCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInpu
 
 void AGrabCharacter::Tick(float DeltaSeconds)
 {
-	if(LeftButtonCLicked)																								/// check if on fire is enabled.
+	Super::Tick(DeltaSeconds);
+	if(MyPlayerController)																								/// check to avoid crashed from null pointer reference.
 	{
-		FVector CameraStart = FirstPersonCameraComponent->GetComponentLocation();
-		FVector CameraEnd = (FirstPersonCameraComponent->GetForwardVector() * 2000.0f) + CameraStart;
-		FHitResult Hit;
-		FCollisionQueryParams Params("GravityGun", false, this);
-		Params.AddIgnoredActor(this);
-		if(GetWorld()->LineTraceSingleByChannel(Hit,CameraStart,CameraEnd,ECC_Visibility,Params))			/// perform a line trace, I got no idea how to do line trace like the video, this is just an 
-		{																												/// attempt to achieve that.
-			FVector ObjectLocation = Hit.Actor->GetActorLocation();
-			FVector PlayerCrossHairDrag = (this->GetActorForwardVector() * Hit.Distance);								
-			DrawDebugLine(GetWorld(),ObjectLocation, PlayerCrossHairDrag,FColor::White,false,0.2,2,4);
+		MyPlayerController->SetMouseLocation(CenterX,CenterY);															/// set mouse cursor location to center of screen
+		MyPlayerController->DeprojectMousePositionToWorld(MouseLocation, MouseDirection);							/// this will assign cursor position in the world, 
+																														/// location and direction to MouseLocation and MouseDirection
+		MyPlayerController->SetInputMode(FInputModeGameOnly());													/// set input mode to this so that character can move freely.
+		if(PickupObject)																								/// Check if after clicking left mosue button, the object is pickeable.
+		{																												/// An object is assigned to PickupObject variable only if the object is movable.	
+			if(PickupObject->IsSimulatingPhysics())																		/// Check if the picked object is simulating physics
+			{
+				if(PhysicsHandleComponent)																				/// make sure our PhysicsHandleComponent is not null
+				{
+					/// Draw a debug line(white colour) from picked object to mouse crsor's direction + that object's distance from cursor.
+					DrawDebugLine(GetWorld(), PickupObject->GetComponentLocation(), MouseLocation+ MouseDirection*ObjectDistance, FColor::White, false, 0,0,3);
+					PhysicsHandleComponent->SetTargetLocation(MouseLocation + (MouseDirection*ObjectDistance));			/// set the picked object's location to mousecursor's location + that object's distance from cursor
+					PhysicsHandleComponent->SetInterpolationSpeed(4.0f);												/// changing this number will change the object grab delay speed
+				}																										/// you can speed up or slow it down by chaning this 4.0f value
+			}
 		}
 	}
 }
 
 void AGrabCharacter::OnFire()
 {
-	LeftButtonCLicked = true;																							////// I'm using this boolean so that a bebug line will be draw immediately by Tick() event
-	float TraceLineLength = 2500.0f;
-	FVector TraceStart = FirstPersonCameraComponent->GetComponentLocation();
-	FVector TraceEnd = (FirstPersonCameraComponent->GetForwardVector() * TraceLineLength) + TraceStart;
-	FHitResult Hit;
-	FCollisionQueryParams QueryParams("GrabbingObjectTrace",false,this);
-	if(GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, QueryParams))		////// Perform a line trace
-	{
-		if(UPrimitiveComponent* PrimComp = Hit.GetComponent())															///// Check if we hit an object. We need to change SimulatingPhysics() property to objects only.
-		{																												///// Can't let the player drag air.
-			if(PrimComp->IsSimulatingPhysics())	
-			{
-				PickTheObject(PrimComp);																				//// If the line trace hit an object and it also happens to generate physics, call PickTheObject.
-			}																											//// PickTheObject will take the object that the line trace hit and change it's physics property.
+	if(MyPlayerController)																								/// we will be using player Controller, so if it happens to be null at any point it'll crash. 
+	{																													/// so, we'll check it before doing anything first
+		FHitResult HitResult;
+		FCollisionQueryParams Parameters;
+		Parameters.AddIgnoredActor(this);																				/// just a straight line trace from mouse cursor
+		if(GetWorld()->LineTraceSingleByChannel(HitResult,MouseLocation, (MouseDirection*5000) + MouseLocation, ECollisionChannel::ECC_Visibility, Parameters))
+		{
+			ObjectDistance = HitResult.Distance;																		/// if the linetrace hits something, get it's distance from cursor.
+				if(HitResult.GetComponent()->Mobility == EComponentMobility::Movable)									/// check if the hit component has movable mobility. We can't move static objects.
+				{
+					PickupObject = HitResult.GetComponent();															/// if it's movable, assign it to PickupObject so that we can use it in Tick()
+					if(PickupObject->IsSimulatingPhysics())																/// check if the picked object is simulating physics
+					{
+						MyPlayerController->CurrentMouseCursor = EMouseCursor::GrabHandClosed;							/// if it's simulating physics and left mouse is clicked, we want a closed hand cursor, just like in the video
+						if(PhysicsHandleComponent)																		/// checking if PhysicsHandleComponet is null or not
+						{
+							PhysicsHandleComponent->GrabComponentAtLocation(PickupObject, NAME_None, HitResult.Location);	/// grab the component from that location. grab at the hit point, not from the object's origin.
+						}																								/// if the object is hit at a corner, we will grab it a that corner, instead of from it's origin.
+					}
+					
+				}
+			
 		}
 	}
 }
 
 void AGrabCharacter::AfterFire()
 {
-	LeftButtonCLicked = false;
-	if(PickedObject)																									//// check if player has alrady picked up an object.
+	if(MyPlayerController)																							/// check if player controller is valid
 	{
-		float ReleaseStrength = 2000.f;
-		const FVector ReleaseVelocity = FirstPersonCameraComponent->GetForwardVector() * ReleaseStrength;				//// declare some shooting speed
-
-		PickedObject->DetachFromComponent(FDetachmentTransformRules::KeepRelativeTransform);							/// since player has picked up an object, he shall release it				
-		PickedObject->SetSimulatePhysics(true);																			/// After releasing the object, enable the physics so that the object can spin and fall.
-		PickedObject->AddImpulse(ReleaseVelocity, NAME_None, true);											/// Add some force to the released object.
-
-		PickTheObject(nullptr);																							/// clear the previous object data. It is required so that if the character doesn't
-																														/// select another object in the next click, previous object will get affected.
-																														/// like previously released cube spinning if the plyer shoots in the sky.
-		
+		MyPlayerController->CurrentMouseCursor = EMouseCursor::Crosshairs;											/// change the cursor to crosshair. 
 	}
-	
-	/////// I disabled the sound.
-	// if (FireSound != nullptr)
-	// {
-	// 	UGameplayStatics::PlaySoundAtLocation(this, FireSound, GetActorLocation());
-	// }
-
-	// try and play a firing animation if specified
-	if (FireAnimation != nullptr)
+	if(PickupObject)																								/// make sure that PhysicsHandleComponent only releases objects if an object is picked first.
 	{
-		// Get the animation object for the arms mesh
-		UAnimInstance* AnimInstance = Mesh1P->GetAnimInstance();
-		if (AnimInstance != nullptr)
-		{
-			AnimInstance->Montage_Play(FireAnimation, 1.f);
-		}
+		PhysicsHandleComponent->ReleaseComponent();																	/// release the object from the physics handle that we grabbed at left mouse click
 	}
-}
+	PickupObject = nullptr;																							/// this is very important. If the PickupObject is not make a null pointer, that 
+}																													/// first hit object will always stay as PickupObject throughout the game.
 
-
-void AGrabCharacter::PickTheObject(UPrimitiveComponent* PickThisObject)
-{
-	PickedObject = PickThisObject;
-	if(PickedObject)									
-	{
-		PickedObject->SetSimulatePhysics(true);																			/// if this is set to false, you could grab the object while it is still in air
-	}
-}
 
 void AGrabCharacter::MoveForward(float Value)
 {
@@ -190,6 +167,7 @@ void AGrabCharacter::MoveForward(float Value)
 	{
 		// add movement in that direction
 		AddMovementInput(GetActorForwardVector(), Value);
+		
 	}
 }
 

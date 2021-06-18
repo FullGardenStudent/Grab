@@ -42,7 +42,6 @@ public:
 	AGrabCharacter();
 
 protected:
-	virtual void BeginPlay();
 
 public:
 	/** Base turn rate, in deg/sec. Other scaling may affect final turn rate. */
@@ -57,54 +56,61 @@ public:
 	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Gameplay)
 	// FVector GunOffset;
 
-	/** Sound to play each time we fire */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Gameplay)
 	USoundBase* FireSound;
 
-	/** AnimMontage to play each time we fire */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Gameplay)
 	UAnimMontage* FireAnimation;
 
-
+	/// we use physics handle component to drag and drop the actors/objects
+	UPROPERTY(EditDefaultsOnly, Category = Components)
+	class UPhysicsHandleComponent* PhysicsHandleComponent = nullptr;
 
 protected:
-	
-	/** Fires a projectile. */
+
+	/// stuff to do when left mouse button is pressed.
 	void OnFire();
+
+	/// stuff to do after left mouse button is released.
 	void AfterFire();
 
-	bool LeftButtonCLicked;
-	void PickTheObject(UPrimitiveComponent* PickThisObject);
-
-	UPROPERTY()
-	UPrimitiveComponent* PickedObject;
-
-	  
-	/** Handles moving forward/backward */
 	void MoveForward(float Val);
 
-	/** Handles stafing movement, left and right */
 	void MoveRight(float Val);
 
-	/**
-	 * Called via input to turn at a given rate.
-	 * @param Rate	This is a normalized rate, i.e. 1.0 means 100% of desired turn rate
-	 */
 	void TurnAtRate(float Rate);
 
-	/**
-	 * Called via input to turn look up/down at a given rate.
-	 * @param Rate	This is a normalized rate, i.e. 1.0 means 100% of desired turn rate
-	 */
 	void LookUpAtRate(float Rate);
+
+	/// We need a scene component to attach an actor to component and hold it so that we could
+	/// check whether the actor/object is simulating physics or now and stuff like that.
+	UPROPERTY()
+	UPrimitiveComponent* PickupObject;
+
+	/// PlayerController is a child class of AController. We will use the mouse pointer from this class.
+	APlayerController* MyPlayerController;
+
+	/// get the center of screen at BeginPlay() and fix the mouse pointer's position at these
+	/// points so that the pointer will stay at the center.
+	float CenterX;
+	float CenterY;
+
+	/// Grab object's distance from mouse pointer
+	float ObjectDistance;
 	
+	FVector MouseLocation, MouseDirection;
+
+
 protected:
+
+	virtual void BeginPlay() override;
 	// APawn interface
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
 	// End of APawn interface
 
-	///// create a tick event constructor.
+	/// create a tick event constructor.
 	virtual void Tick(float DeltaSeconds) override;
+
 
 public:
 	/** Returns Mesh1P subobject **/
